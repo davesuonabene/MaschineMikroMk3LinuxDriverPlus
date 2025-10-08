@@ -1,6 +1,9 @@
+// In crates/maschine_library/src/controls.rs
+
 use num_derive::FromPrimitive;
 
-#[derive(FromPrimitive, Debug, Clone, Copy, PartialEq)]
+// Added Hash and Eq traits here.
+#[derive(FromPrimitive, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Buttons {
     Maschine = 0,
     Star = 1,

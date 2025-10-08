@@ -1,4 +1,26 @@
 use serde::Deserialize;
+use std::collections::HashMap; // New import
+
+// New Enum for Button Modes
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ButtonMode {
+    Trigger, // 1 on press, 0 on release
+    Toggle,  // Switch between 1 and 0 on press, ignores release
+}
+
+impl Default for ButtonMode {
+    fn default() -> Self {
+        ButtonMode::Trigger
+    }
+}
+
+// New Struct for Button-specific Settings
+#[derive(Deserialize, Debug, Clone)]
+pub(crate) struct ButtonConfig {
+    #[serde(default)]
+    pub mode: ButtonMode,
+}
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct Settings {
@@ -12,6 +34,8 @@ pub(crate) struct Settings {
     pub osc_ip: String, // New field for OSC IP
     #[serde(default)]
     pub osc_port: u16,  // New field for OSC Port
+    #[serde(default)]
+    pub button_configs: HashMap<String, ButtonConfig>,
 }
 
 impl Default for Settings {
@@ -24,6 +48,7 @@ impl Default for Settings {
             port_name: "Maschine Mikro MK3 MIDI".to_string(),
             osc_ip: "127.0.0.1".to_string(), // Default to localhost
             osc_port: 57120, // Default to a common OSC port
+            button_configs: HashMap::new(), // Default to empty map
         }
     }
 }

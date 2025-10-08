@@ -4,3 +4,9 @@ port_name = "Maschine Mikro MK3 MIDI Out"
 
 osc_ip = "127.0.0.1"
 osc_port = 57120
+
+[button_configs.Shift] # Example: Make Shift button a Toggle
+mode = "toggle"
+
+[button_configs.Play] # Example: Make Play button a Trigger (explicitly set)
+mode = "trigger"

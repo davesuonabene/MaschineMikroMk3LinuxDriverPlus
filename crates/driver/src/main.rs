@@ -2,10 +2,10 @@ mod self_test;
 mod settings;
 
 use crate::self_test::self_test;
-use crate::settings::Settings;
+use crate::settings::{Settings, ButtonMode}; 
 use clap::Parser;
 use config::Config;
-use hidapi::{HidDevice, HidResult, HidError}; // Explicitly import HidError
+use hidapi::{HidDevice, HidResult}; 
 use maschine_library::controls::{Buttons, PadEventType};
 use maschine_library::lights::{Brightness, Lights, PadColors};
 use maschine_library::screen::Screen;
@@ -13,11 +13,10 @@ use midir::os::unix::VirtualOutput;
 use midir::{MidiOutput, MidiOutputConnection};
 use midly::{MidiMessage, live::LiveEvent};
 
-// --- CORRECTED NEW IMPORTS ---
 use rosc::{OscMessage, OscPacket, OscType};
 use std::net::{UdpSocket, ToSocketAddrs};
-use std::error::Error as StdError; // Import the standard Error trait
-// --- END CORRECTED NEW IMPORTS ---
+use std::error::Error as StdError; 
+use std::collections::HashMap; 
 
 #[derive(Parser, Debug)]
 #[clap(
@@ -30,7 +29,6 @@ struct Args {
     config: Option<String>,
 }
 
-// Changed return type to handle networking errors gracefully.
 fn main() -> Result<(), Box<dyn StdError>> {
     let args = Args::parse();
 
@@ -49,7 +47,6 @@ fn main() -> Result<(), Box<dyn StdError>> {
     println!("{settings:?}");
 
     // --- OSC INITIALIZATION ---
-    // Bind to any local address (0.0.0.0:0) for sending
     let osc_socket = UdpSocket::bind("0.0.0.0:0").expect("Failed to bind UDP socket for OSC");
     let osc_addr: std::net::SocketAddr = format!("{}:{}", settings.osc_ip, settings.osc_port)
         .to_socket_addrs()?
@@ -74,7 +71,6 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     self_test(&device, &mut screen, &mut lights)?;
 
-    // FIX: Use .map_err() with Box::from to convert HidError to Box<dyn StdError>
     main_loop(
         &device, 
         &mut screen, 
@@ -99,6 +95,12 @@ fn main_loop(
     osc_addr: &std::net::SocketAddr,
 
 ) -> HidResult<()> {
+    
+    // Track the internal ON/OFF state for all toggle buttons
+    let mut toggle_states: HashMap<Buttons, bool> = HashMap::new();
+    // NEW: Track the last encoder value reported to suppress repeat printing of sticky values
+    let mut last_encoder_val: u8 = 0; 
+    
     let mut buf = [0u8; 64];
     loop {
         let size = device.read_timeout(&mut buf, 10)?;
@@ -119,54 +121,108 @@ fn main_loop(
                         Some(val) => val,
                         None => continue,
                     };
+                    
                     let status = buf[i + 1] & (1 << j);
                     let is_pressed = status > 0;
                     
-                    if is_pressed {
-                        println!("{:?}", button); 
-                    }
-                    if lights.button_has_light(button) {
-                        let light_status = lights.get_button(button) != Brightness::Off;
-                        if is_pressed != light_status {
-                            lights.set_button(
-                                button,
-                                if is_pressed {
-                                    Brightness::Normal
+                    // Look up configuration
+                    let button_name = format!("{:?}", button).to_string();
+                    let config = settings.button_configs.get(&button_name);
+                    let mode = config.map(|c| c.mode).unwrap_or_default();
+                    
+                    let current_light_state = lights.get_button(button) != Brightness::Off;
+                    
+                    let mut should_send_osc = false;
+                    let mut osc_value: i32 = 0;
+                    let mut target_light_brightness: Option<Brightness> = None;
+                    
+                    match mode {
+                        ButtonMode::Trigger => {
+                            // Trigger: Send 1 on press, 0 on release (only on state transition)
+                            if is_pressed != current_light_state {
+                                should_send_osc = true;
+                                osc_value = if is_pressed { 1 } else { 0 };
+                                target_light_brightness = Some(if is_pressed { 
+                                    Brightness::Normal 
+                                } else { 
+                                    Brightness::Off 
+                                });
+                            }
+                        }
+                        ButtonMode::Toggle => {
+                            // FIX: Only trigger the toggle state change if the button is pressed 
+                            // AND the light is NOT currently Bright (to debounce the press).
+                            if is_pressed && lights.get_button(button) != Brightness::Bright { 
+                                
+                                let current_toggle_state = *toggle_states.entry(button).or_insert(false);
+                                let new_toggle_state = !current_toggle_state;
+                                
+                                toggle_states.insert(button, new_toggle_state);
+                                should_send_osc = true;
+                                // FIX: OSC value is correctly set here for both 1 (ON) and 0 (OFF)
+                                osc_value = if new_toggle_state { 1 } else { 0 }; 
+                                
+                                // Set light state to Bright (fully ON cue)
+                                target_light_brightness = Some(Brightness::Bright);
+                            }
+                            
+                            // Handle light release feedback (Dim = ON, Released)
+                            if !is_pressed && current_light_state {
+                                // Check the current state of the toggle
+                                if *toggle_states.get(&button).unwrap_or(&false) {
+                                    // If toggle is ON, but button released, set dim light (visual feedback)
+                                    target_light_brightness = Some(Brightness::Dim); 
                                 } else {
-                                    Brightness::Off
-                                },
-                            );
-                            changed_lights = true;
-
-                            // --- START: New OSC Sending Logic ---
-                            let button_name = format!("{:?}", button);
-                            
-                            // 1. Create OSC Address: /maschine/button_name_lowercase
-                            let address = format!("/maschine/{}", button_name.to_lowercase());
-                            
-                            // 2. Determine value: 1 for press, 0 for release
-                            let osc_value = if is_pressed { 1 } else { 0 };
-
-                            // 3. Create the OSC Message: Address + Int Argument
-                            let msg_contents = OscMessage {
-                                addr: address,
-                                args: vec![OscType::Int(osc_value)], 
-                            };
-                            let packet = OscPacket::Message(msg_contents);
-
-                            // 4. Encode and Send
-                            if let Ok(encoded_buf) = rosc::encoder::encode(&packet) {
-                                if let Err(e) = osc_socket.send_to(&encoded_buf, osc_addr) {
-                                    eprintln!("Failed to send OSC message for {:?}: {}", button, e);
+                                    // If toggle is OFF, turn light off (this is the state after OSC 0 is sent)
+                                    target_light_brightness = Some(Brightness::Off);
                                 }
                             }
-                            // --- END: New OSC Sending Logic ---
                         }
+                    }
+                    
+                    // Handle OSC sending
+                    if should_send_osc {
+                        let address = format!("/maschine/{}", button_name.to_lowercase());
+                        let msg_contents = OscMessage {
+                            addr: address,
+                            args: vec![OscType::Int(osc_value)], 
+                        };
+                        let packet = OscPacket::Message(msg_contents);
+
+                        if let Ok(encoded_buf) = rosc::encoder::encode(&packet) {
+                            if let Err(e) = osc_socket.send_to(&encoded_buf, osc_addr) {
+                                eprintln!("Failed to send OSC message for {:?}: {}", button, e);
+                            }
+                        }
+                    }
+                    
+                    // Handle light update
+                    if let Some(b) = target_light_brightness {
+                        if lights.button_has_light(button) {
+                            lights.set_button(button, b);
+                            changed_lights = true;
+                        }
+                    }
+
+                    // Log press if it's a trigger
+                    if mode == ButtonMode::Trigger && is_pressed {
+                        println!("{:?}", button); 
                     }
                 }
             }
+            
+            // --- FIX: Implement state tracking for encoder value ---
             let encoder_val = buf[7];
-            println!("Encoder: {}", encoder_val);
+            
+            // Only print if the value is non-zero (movement) OR if the value has changed back to zero 
+            // from a previous non-zero value (solving the "never goes to zero" observation).
+            if encoder_val != 0 || last_encoder_val != encoder_val {
+                println!("Encoder: {}", encoder_val);
+            }
+            // Update last_encoder_val for the next iteration
+            last_encoder_val = encoder_val;
+            // --- END FIX ---
+            
             let slider_val = buf[10];
             if slider_val != 0 {
                 println!("Slider: {}", slider_val);
