@@ -1,4 +1,4 @@
-notemaps = [49, 27, 31, 57, 48, 47, 43, 59, 36, 38, 46, 51, 36, 38, 42, 44]
+notemaps = [61, 62, 63, 64, 57, 58, 59, 60, 53, 54, 55, 56, 49, 50, 51, 52]
 client_name = "Maschine Mikro MK3"
 port_name = "Maschine Mikro MK3 MIDI Out"
 
@@ -48,3 +48,27 @@ group_id = 2
 [button_configs.Notes]
 mode = "toggle"
 group_id = 2
+
+[button_configs.Pattern]
+mode = "toggle"
+group_id = 3
+
+[button_configs.Scene]
+mode = "toggle"
+group_id = 3
+
+[button_configs.Events]
+mode = "toggle"
+group_id = 3
+
+[button_configs.Variation]
+mode = "toggle"
+group_id = 3
+
+[button_configs.Duplicate]
+mode = "toggle"
+group_id = 3
+
+[button_configs.Select]
+mode = "toggle"
+group_id = 3
