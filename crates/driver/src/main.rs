@@ -5,13 +5,19 @@ use crate::self_test::self_test;
 use crate::settings::Settings;
 use clap::Parser;
 use config::Config;
-use hidapi::{HidDevice, HidResult};
+use hidapi::{HidDevice, HidResult, HidError}; // Explicitly import HidError
 use maschine_library::controls::{Buttons, PadEventType};
 use maschine_library::lights::{Brightness, Lights, PadColors};
 use maschine_library::screen::Screen;
 use midir::os::unix::VirtualOutput;
 use midir::{MidiOutput, MidiOutputConnection};
 use midly::{MidiMessage, live::LiveEvent};
+
+// --- CORRECTED NEW IMPORTS ---
+use rosc::{OscMessage, OscPacket, OscType};
+use std::net::{UdpSocket, ToSocketAddrs};
+use std::error::Error as StdError; // Import the standard Error trait
+// --- END CORRECTED NEW IMPORTS ---
 
 #[derive(Parser, Debug)]
 #[clap(
@@ -24,7 +30,8 @@ struct Args {
     config: Option<String>,
 }
 
-fn main() -> HidResult<()> {
+// Changed return type to handle networking errors gracefully.
+fn main() -> Result<(), Box<dyn StdError>> {
     let args = Args::parse();
 
     let mut cfg = Config::builder();
@@ -40,6 +47,15 @@ fn main() -> HidResult<()> {
 
     println!("Running with settings:");
     println!("{settings:?}");
+
+    // --- OSC INITIALIZATION ---
+    // Bind to any local address (0.0.0.0:0) for sending
+    let osc_socket = UdpSocket::bind("0.0.0.0:0").expect("Failed to bind UDP socket for OSC");
+    let osc_addr: std::net::SocketAddr = format!("{}:{}", settings.osc_ip, settings.osc_port)
+        .to_socket_addrs()?
+        .next().unwrap();
+    println!("OSC output initialized to {}", osc_addr);
+    // --- END OSC INITIALIZATION ---
 
     let output = MidiOutput::new(&settings.client_name).expect("Couldn't open MIDI output");
     let mut port = output
@@ -58,8 +74,17 @@ fn main() -> HidResult<()> {
 
     self_test(&device, &mut screen, &mut lights)?;
 
-    main_loop(&device, &mut screen, &mut lights, &mut port, &settings)?;
-
+    // FIX: Use .map_err() with Box::from to convert HidError to Box<dyn StdError>
+    main_loop(
+        &device, 
+        &mut screen, 
+        &mut lights, 
+        &mut port, 
+        &settings, 
+        &osc_socket, 
+        &osc_addr
+    ).map_err(|e| Box::<dyn StdError>::from(e))?; 
+    
     Ok(())
 }
 
@@ -69,6 +94,10 @@ fn main_loop(
     lights: &mut Lights,
     port: &mut MidiOutputConnection,
     settings: &Settings,
+
+    osc_socket: &UdpSocket,
+    osc_addr: &std::net::SocketAddr,
+
 ) -> HidResult<()> {
     let mut buf = [0u8; 64];
     loop {
@@ -91,22 +120,47 @@ fn main_loop(
                         None => continue,
                     };
                     let status = buf[i + 1] & (1 << j);
-                    let status = status > 0;
-                    if status {
-                        println!("{:?}", button);
+                    let is_pressed = status > 0;
+                    
+                    if is_pressed {
+                        println!("{:?}", button); 
                     }
                     if lights.button_has_light(button) {
                         let light_status = lights.get_button(button) != Brightness::Off;
-                        if status != light_status {
+                        if is_pressed != light_status {
                             lights.set_button(
                                 button,
-                                if status {
+                                if is_pressed {
                                     Brightness::Normal
                                 } else {
                                     Brightness::Off
                                 },
                             );
                             changed_lights = true;
+
+                            // --- START: New OSC Sending Logic ---
+                            let button_name = format!("{:?}", button);
+                            
+                            // 1. Create OSC Address: /maschine/button_name_lowercase
+                            let address = format!("/maschine/{}", button_name.to_lowercase());
+                            
+                            // 2. Determine value: 1 for press, 0 for release
+                            let osc_value = if is_pressed { 1 } else { 0 };
+
+                            // 3. Create the OSC Message: Address + Int Argument
+                            let msg_contents = OscMessage {
+                                addr: address,
+                                args: vec![OscType::Int(osc_value)], 
+                            };
+                            let packet = OscPacket::Message(msg_contents);
+
+                            // 4. Encode and Send
+                            if let Ok(encoded_buf) = rosc::encoder::encode(&packet) {
+                                if let Err(e) = osc_socket.send_to(&encoded_buf, osc_addr) {
+                                    eprintln!("Failed to send OSC message for {:?}: {}", button, e);
+                                }
+                            }
+                            // --- END: New OSC Sending Logic ---
                         }
                     }
                 }

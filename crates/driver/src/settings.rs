@@ -8,6 +8,10 @@ pub(crate) struct Settings {
     pub client_name: String,
     #[serde(default)]
     pub port_name: String,
+    #[serde(default)]
+    pub osc_ip: String, // New field for OSC IP
+    #[serde(default)]
+    pub osc_port: u16,  // New field for OSC Port
 }
 
 impl Default for Settings {
@@ -17,7 +21,9 @@ impl Default for Settings {
                 49, 27, 31, 57, 48, 47, 43, 59, 36, 38, 46, 51, 36, 38, 42, 44,
             ],
             client_name: "Maschine Mikro MK3".to_string(),
-            port_name: "Maschine Mikro MK3 MIDI Out".to_string(),
+            port_name: "Maschine Mikro MK3 MIDI".to_string(),
+            osc_ip: "127.0.0.1".to_string(), // Default to localhost
+            osc_port: 57120, // Default to a common OSC port
         }
     }
 }

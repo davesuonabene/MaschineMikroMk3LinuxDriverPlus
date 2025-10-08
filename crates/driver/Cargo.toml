@@ -12,6 +12,7 @@ midly.workspace = true
 clap.workspace = true
 config.workspace = true
 serde.workspace = true
+rosc = "0.10"
 
 midir = { version = "0.10.2", features = ["default"] }
 
