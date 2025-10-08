@@ -14,9 +14,26 @@ use midir::{MidiOutput, MidiOutputConnection};
 use midly::{MidiMessage, live::LiveEvent};
 
 use rosc::{OscMessage, OscPacket, OscType};
+use rosc::decoder;
 use std::net::{UdpSocket, ToSocketAddrs};
 use std::error::Error as StdError; 
 use std::collections::HashMap; 
+use std::io::ErrorKind; 
+
+// Helper function to safely look up button by name.
+fn button_from_name(name: &str) -> Option<Buttons> {
+    // Iterate over all possible button indices (0 through 40)
+    for i in 0..41 { 
+        if let Some(button) = num::FromPrimitive::from_usize(i) {
+            // Compare the string representation of the enum variant (e.g., "Events") 
+            // with the incoming OSC string (e.g., "events"), ignoring case.
+            if format!("{:?}", button).to_string().eq_ignore_ascii_case(name) {
+                return Some(button);
+            }
+        }
+    }
+    None
+}
 
 #[derive(Parser, Debug)]
 #[clap(
@@ -46,13 +63,32 @@ fn main() -> Result<(), Box<dyn StdError>> {
     println!("Running with settings:");
     println!("{settings:?}");
 
-    // --- OSC INITIALIZATION ---
+    // --- OSC INITIALIZATION (Sender) ---
+    // This binds to a dynamic port (0) for sending data.
     let osc_socket = UdpSocket::bind("0.0.0.0:0").expect("Failed to bind UDP socket for OSC");
+    
+    // FIX: Get and print the actual dynamic sender port
+    let osc_sender_local_port = osc_socket.local_addr()?.port();
+    
     let osc_addr: std::net::SocketAddr = format!("{}:{}", settings.osc_ip, settings.osc_port)
         .to_socket_addrs()?
         .next().unwrap();
-    println!("OSC output initialized to {}", osc_addr);
-    // --- END OSC INITIALIZATION ---
+        
+    println!("OSC output source port (dynamic): {}", osc_sender_local_port);
+    println!("OSC output destination: {}", osc_addr);
+    // --- END OSC INITIALIZATION (Sender) ---
+
+    // --- OSC LISTENER INITIALIZATION ---
+    let osc_listener = UdpSocket::bind(format!("{}:{}", settings.osc_ip, settings.osc_listen_port))
+        .expect("Failed to bind OSC listener socket");
+    
+    osc_listener.set_nonblocking(true)
+        .expect("Failed to set OSC listener to non-blocking");
+        
+    // FIX: Get and print the actual listener port (should match config value, e.g., 57121)
+    let osc_listener_port = osc_listener.local_addr()?.port();
+    println!("OSC listener successfully bound to port {}", osc_listener_port);
+    // --- END OSC LISTENER INITIALIZATION ---
 
     let output = MidiOutput::new(&settings.client_name).expect("Couldn't open MIDI output");
     let mut port = output
@@ -78,7 +114,8 @@ fn main() -> Result<(), Box<dyn StdError>> {
         &mut port, 
         &settings, 
         &osc_socket, 
-        &osc_addr
+        &osc_addr,
+        &osc_listener, 
     ).map_err(|e| Box::<dyn StdError>::from(e))?; 
     
     Ok(())
@@ -93,6 +130,7 @@ fn main_loop(
 
     osc_socket: &UdpSocket,
     osc_addr: &std::net::SocketAddr,
+    osc_listener: &UdpSocket, 
 
 ) -> HidResult<()> {
     
@@ -100,7 +138,6 @@ fn main_loop(
     let mut last_encoder_val: u8 = 0; 
     
     // --- Pre-process EXCLUSIVE GROUPS based on group_id ---
-    // Map: Group ID (u8) -> List of member button names (String)
     let mut exclusive_groups: HashMap<u8, Vec<String>> = HashMap::new();
 
     for (button_name, config) in settings.button_configs.iter() {
@@ -116,13 +153,17 @@ fn main_loop(
     // --- END Pre-processing ---
     
     let mut buf = [0u8; 64];
+    let mut osc_recv_buf = [0u8; 1024]; 
+    
     loop {
         let size = device.read_timeout(&mut buf, 10)?;
         if size < 1 {
-            continue;
+            // Check for OSC input even if HID has no data
         }
 
         let mut changed_lights = false;
+        
+        // --- HID DEVICE INPUT (BUTTONS) ---
         if buf[0] == 0x01 {
             // button mode
             for i in 0..6 {
@@ -142,7 +183,6 @@ fn main_loop(
                     let button_name = format!("{:?}", button).to_string();
                     let config = settings.button_configs.get(&button_name);
                     
-                    // FIX: Use map/unwrap_or with explicit default value (Trigger)
                     let mode = config.map(|c| c.mode).unwrap_or(ButtonMode::Trigger); 
                     
                     let current_light_state = lights.get_button(button) != Brightness::Off;
@@ -171,7 +211,6 @@ fn main_loop(
                                 
                                 // --- START: EXCLUSIVE GROUP LOGIC ---
                                 if new_toggle_state { // Only run exclusivity check when turning ON
-                                    // FIX: Use and_then to safely get group_id from Option<&ButtonConfig>
                                     if let Some(group_id) = config.and_then(|c| c.group_id) { 
                                         if let Some(member_names) = exclusive_groups.get(&group_id) {
                                             
@@ -342,6 +381,51 @@ fn main_loop(
                 }
             }
         }
+        
+        // --- NEW: HANDLE INCOMING OSC NETWORK INPUT ---
+        match osc_listener.recv_from(&mut osc_recv_buf) {
+            Ok((size, _addr)) => {
+                if let Ok((_remaining, packet)) = decoder::decode_udp(&osc_recv_buf[..size]) { 
+                    if let OscPacket::Message(msg) = packet {
+                        // Example Address: /puredata/events/1
+                        let address_parts: Vec<&str> = msg.addr.trim_start_matches('/').split('/').collect();
+
+                        // Check for the expected address structure: [PREFIX]/[BUTTON_NAME]/[VALUE]
+                        if address_parts.len() >= 2 {
+                            
+                            let button_name_str = address_parts[1];
+                            
+                            if let Some(button) = button_from_name(button_name_str) {
+                                
+                                if let Some(OscType::Int(val)) = msg.args.first() {
+                                    
+                                    println!("OSC RX: Controlling button {}: {}", button_name_str, val);
+                                    
+                                    let new_brightness = match *val {
+                                        1 => Brightness::Bright, 
+                                        _ => Brightness::Off,     
+                                    };
+                                    
+                                    if lights.button_has_light(button) {
+                                        lights.set_button(button, new_brightness);
+                                        changed_lights = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                // No data available right now. This is expected in non-blocking mode.
+            } 
+            Err(e) => {
+                // A genuine network error occurred
+                eprintln!("OSC listener error: {}", e);
+            }
+        }
+        // --- END OSC NETWORK INPUT ---
+
         if changed_lights {
             lights.write(device)?;
         }

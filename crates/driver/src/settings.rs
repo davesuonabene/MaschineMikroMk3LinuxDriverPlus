@@ -47,6 +47,10 @@ pub(crate) struct Settings {
     #[serde(default)]
     pub osc_port: u16,
     
+    // FIX: Added osc_listen_port
+    #[serde(default)]
+    pub osc_listen_port: u16, 
+    
     #[serde(default)]
     pub button_configs: HashMap<String, ButtonConfig>,
 }
@@ -61,6 +65,7 @@ impl Default for Settings {
             port_name: "Maschine Mikro MK3 MIDI Out".to_string(),
             osc_ip: "127.0.0.1".to_string(),
             osc_port: 57120,
+            osc_listen_port: 57121, // Default listener port
             button_configs: HashMap::new(),
         }
     }
