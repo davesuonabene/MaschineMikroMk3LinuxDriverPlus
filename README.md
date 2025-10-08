@@ -1,12 +1,12 @@
 # Maschine Mikro MK3 Linux Driver +
-Userspace for linux to work with the Native Instruments Maschine Mikro MK3, aiming to complete control of the functionalities of the interface.
+I got very upset that Native Instruments never got the time to make their Maschine useful for Linux users, not even with their app, just with basic MIDI functionality.
+This work aims to hack the Maschine Mikro MK3 to work with Linux with extended control over the interface capabilities for uses with DAWs or any other OSC capable software.
 
 Forked from: [https://github.com/r00tman/maschine-mikro-mk3-driver/tree/main/crates]
 
 
-## Getting Started
+## Prerequisites
 
-Let's install dependencies first:
 - Debian/Ubuntu:
   ```
   sudo apt install build-essential pkg-config libasound2-dev libjack-dev libusb-1.0-0-dev libudev-dev
@@ -20,7 +20,7 @@ Let's install dependencies first:
   sudo pacman -S base-devel alsa-lib pipewire-jack libusb systemd-libs  # (or `jack2` instead of `pipewire-jack`)
   ``` 
 
-Then we can proceed with the repo:
+## Installation and Build
 
 ```shell
 git clone https://github.com/davesuonabene/MaschineMikroMk3LinuxDriverPlus.git; cd MaschineMikroMk3LinuxDriverPlus
