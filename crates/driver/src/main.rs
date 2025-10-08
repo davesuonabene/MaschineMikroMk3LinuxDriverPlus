@@ -96,10 +96,24 @@ fn main_loop(
 
 ) -> HidResult<()> {
     
-    // Track the internal ON/OFF state for all toggle buttons
     let mut toggle_states: HashMap<Buttons, bool> = HashMap::new();
-    // NEW: Track the last encoder value reported to suppress repeat printing of sticky values
     let mut last_encoder_val: u8 = 0; 
+    
+    // --- Pre-process EXCLUSIVE GROUPS based on group_id ---
+    // Map: Group ID (u8) -> List of member button names (String)
+    let mut exclusive_groups: HashMap<u8, Vec<String>> = HashMap::new();
+
+    for (button_name, config) in settings.button_configs.iter() {
+        if config.mode == ButtonMode::Toggle {
+            if let Some(group_id) = config.group_id {
+                exclusive_groups
+                    .entry(group_id)
+                    .or_insert_with(Vec::new)
+                    .push(button_name.clone());
+            }
+        }
+    }
+    // --- END Pre-processing ---
     
     let mut buf = [0u8; 64];
     loop {
@@ -125,10 +139,11 @@ fn main_loop(
                     let status = buf[i + 1] & (1 << j);
                     let is_pressed = status > 0;
                     
-                    // Look up configuration
                     let button_name = format!("{:?}", button).to_string();
                     let config = settings.button_configs.get(&button_name);
-                    let mode = config.map(|c| c.mode).unwrap_or_default();
+                    
+                    // FIX: Use map/unwrap_or with explicit default value (Trigger)
+                    let mode = config.map(|c| c.mode).unwrap_or(ButtonMode::Trigger); 
                     
                     let current_light_state = lights.get_button(button) != Brightness::Off;
                     
@@ -138,7 +153,6 @@ fn main_loop(
                     
                     match mode {
                         ButtonMode::Trigger => {
-                            // Trigger: Send 1 on press, 0 on release (only on state transition)
                             if is_pressed != current_light_state {
                                 should_send_osc = true;
                                 osc_value = if is_pressed { 1 } else { 0 };
@@ -150,30 +164,64 @@ fn main_loop(
                             }
                         }
                         ButtonMode::Toggle => {
-                            // FIX: Only trigger the toggle state change if the button is pressed 
-                            // AND the light is NOT currently Bright (to debounce the press).
                             if is_pressed && lights.get_button(button) != Brightness::Bright { 
                                 
                                 let current_toggle_state = *toggle_states.entry(button).or_insert(false);
                                 let new_toggle_state = !current_toggle_state;
                                 
+                                // --- START: EXCLUSIVE GROUP LOGIC ---
+                                if new_toggle_state { // Only run exclusivity check when turning ON
+                                    // FIX: Use and_then to safely get group_id from Option<&ButtonConfig>
+                                    if let Some(group_id) = config.and_then(|c| c.group_id) { 
+                                        if let Some(member_names) = exclusive_groups.get(&group_id) {
+                                            
+                                            for other_name in member_names {
+                                                if other_name != &button_name {
+                                                    // Find the Buttons enum value by name and reset its state
+                                                    for other_idx in 0..41 { 
+                                                        if let Some(other_button) = num::FromPrimitive::from_usize(other_idx) {
+                                                            if format!("{:?}", other_button).to_string() == *other_name {
+                                                                
+                                                                // 1. Reset toggle state
+                                                                toggle_states.insert(other_button, false);
+                                                                
+                                                                // 2. Reset light
+                                                                lights.set_button(other_button, Brightness::Off);
+                                                                changed_lights = true;
+                                                                
+                                                                // 3. Send OSC 0
+                                                                let address = format!("/maschine/{}", other_name.to_lowercase());
+                                                                let msg_contents = OscMessage {
+                                                                    addr: address,
+                                                                    args: vec![OscType::Int(0)], 
+                                                                };
+                                                                let packet = OscPacket::Message(msg_contents);
+                                                                if let Ok(encoded_buf) = rosc::encoder::encode(&packet) {
+                                                                    let _ = osc_socket.send_to(&encoded_buf, osc_addr);
+                                                                }
+                                                                break; // Stop searching once found
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // --- END: EXCLUSIVE GROUP LOGIC ---
+                                
                                 toggle_states.insert(button, new_toggle_state);
                                 should_send_osc = true;
-                                // FIX: OSC value is correctly set here for both 1 (ON) and 0 (OFF)
                                 osc_value = if new_toggle_state { 1 } else { 0 }; 
                                 
-                                // Set light state to Bright (fully ON cue)
                                 target_light_brightness = Some(Brightness::Bright);
                             }
                             
                             // Handle light release feedback (Dim = ON, Released)
                             if !is_pressed && current_light_state {
-                                // Check the current state of the toggle
                                 if *toggle_states.get(&button).unwrap_or(&false) {
-                                    // If toggle is ON, but button released, set dim light (visual feedback)
                                     target_light_brightness = Some(Brightness::Dim); 
                                 } else {
-                                    // If toggle is OFF, turn light off (this is the state after OSC 0 is sent)
                                     target_light_brightness = Some(Brightness::Off);
                                 }
                             }
@@ -204,25 +252,21 @@ fn main_loop(
                         }
                     }
 
-                    // Log press if it's a trigger
                     if mode == ButtonMode::Trigger && is_pressed {
                         println!("{:?}", button); 
                     }
                 }
             }
             
-            // --- FIX: Implement state tracking for encoder value ---
+            // Encoder logic (filtered printing)
             let encoder_val = buf[7];
             
-            // Only print if the value is non-zero (movement) OR if the value has changed back to zero 
-            // from a previous non-zero value (solving the "never goes to zero" observation).
             if encoder_val != 0 || last_encoder_val != encoder_val {
                 println!("Encoder: {}", encoder_val);
             }
-            // Update last_encoder_val for the next iteration
             last_encoder_val = encoder_val;
-            // --- END FIX ---
             
+            // Slider logic
             let slider_val = buf[10];
             if slider_val != 0 {
                 println!("Slider: {}", slider_val);

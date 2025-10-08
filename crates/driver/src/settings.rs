@@ -1,7 +1,6 @@
 use serde::Deserialize;
-use std::collections::HashMap; // New import
+use std::collections::HashMap;
 
-// New Enum for Button Modes
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ButtonMode {
@@ -9,17 +8,30 @@ pub enum ButtonMode {
     Toggle,  // Switch between 1 and 0 on press, ignores release
 }
 
+// FIX: Explicitly implement Default for ButtonMode, defaulting to Trigger
 impl Default for ButtonMode {
     fn default() -> Self {
         ButtonMode::Trigger
     }
 }
 
-// New Struct for Button-specific Settings
 #[derive(Deserialize, Debug, Clone)]
 pub(crate) struct ButtonConfig {
     #[serde(default)]
     pub mode: ButtonMode,
+    
+    #[serde(default)] 
+    pub group_id: Option<u8>,
+}
+
+// FIX: Implement Default for ButtonConfig
+impl Default for ButtonConfig {
+    fn default() -> Self {
+        Self {
+            mode: ButtonMode::Trigger,
+            group_id: None, // Default: no group
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -31,9 +43,10 @@ pub(crate) struct Settings {
     #[serde(default)]
     pub port_name: String,
     #[serde(default)]
-    pub osc_ip: String, // New field for OSC IP
+    pub osc_ip: String,
     #[serde(default)]
-    pub osc_port: u16,  // New field for OSC Port
+    pub osc_port: u16,
+    
     #[serde(default)]
     pub button_configs: HashMap<String, ButtonConfig>,
 }
@@ -45,10 +58,10 @@ impl Default for Settings {
                 49, 27, 31, 57, 48, 47, 43, 59, 36, 38, 46, 51, 36, 38, 42, 44,
             ],
             client_name: "Maschine Mikro MK3".to_string(),
-            port_name: "Maschine Mikro MK3 MIDI".to_string(),
-            osc_ip: "127.0.0.1".to_string(), // Default to localhost
-            osc_port: 57120, // Default to a common OSC port
-            button_configs: HashMap::new(), // Default to empty map
+            port_name: "Maschine Mikro MK3 MIDI Out".to_string(),
+            osc_ip: "127.0.0.1".to_string(),
+            osc_port: 57120,
+            button_configs: HashMap::new(),
         }
     }
 }

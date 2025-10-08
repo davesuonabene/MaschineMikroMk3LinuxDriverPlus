@@ -1,0 +1,50 @@
+notemaps = [49, 27, 31, 57, 48, 47, 43, 59, 36, 38, 46, 51, 36, 38, 42, 44]
+client_name = "Maschine Mikro MK3"
+port_name = "Maschine Mikro MK3 MIDI Out"
+
+osc_ip = "127.0.0.1"
+osc_port = 57120
+
+[button_configs.Shift]
+mode = "trigger"
+
+[button_configs.Play]
+mode = "trigger"
+
+[button_configs.Stop]
+mode = "trigger"
+
+[button_configs.Rec]
+mode = "toggle"
+
+[button_configs.Group]
+mode = "toggle"
+group_id = 1
+
+[button_configs.NoteRepeat]
+mode = "toggle"
+group_id = 1
+
+[button_configs.Lock]
+mode = "toggle"
+group_id = 1
+
+[button_configs.Auto]
+mode = "toggle"
+group_id = 1
+
+[button_configs.Pitch]
+mode = "toggle"
+group_id = 2
+
+[button_configs.Mod]
+mode = "toggle"
+group_id = 2
+
+[button_configs.Perform]
+mode = "toggle"
+group_id = 2
+
+[button_configs.Notes]
+mode = "toggle"
+group_id = 2
