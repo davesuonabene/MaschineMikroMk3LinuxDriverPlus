@@ -22,6 +22,9 @@ pub(crate) struct ButtonConfig {
     
     #[serde(default)] 
     pub group_id: Option<u8>,
+
+    #[serde(default)]
+    pub cc: Option<u8>, 
 }
 
 // FIX: Implement Default for ButtonConfig
@@ -30,6 +33,7 @@ impl Default for ButtonConfig {
         Self {
             mode: ButtonMode::Trigger,
             group_id: None, // Default: no group
+            cc: None, // Default: no CC message
         }
     }
 }

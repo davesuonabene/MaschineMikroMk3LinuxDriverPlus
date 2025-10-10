@@ -283,6 +283,32 @@ fn main_loop(
                             }
                         }
                     }
+
+                    // --- BEGIN ADDITION ---
+                    // Handle MIDI CC sending
+                    if let Some(cc_num) = config.and_then(|c| c.cc) {
+                        // Only send CC on a state change (press or release for trigger, only press for toggle)
+                        if should_send_osc { 
+                            let cc_val = if osc_value == 1 { 127 } else { 0 };
+                            
+                            let cc_message = MidiMessage::Controller {
+                                controller: cc_num.into(),
+                                value: cc_val.into(),
+                            };
+
+                            let live_event = LiveEvent::Midi {
+                                channel: 0.into(),
+                                message: cc_message,
+                            };
+
+                            let mut buf = Vec::new();
+                            live_event.write(&mut buf).unwrap();
+                            port.send(&buf[..]).unwrap();
+
+                            println!("Sent CC: {} on controller {}", cc_val, cc_num);
+                        }
+                    }
+                    // --- END ADDITION ---
                     
                     // Handle light update
                     if let Some(b) = target_light_brightness {

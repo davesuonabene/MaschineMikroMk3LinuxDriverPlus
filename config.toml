@@ -9,12 +9,15 @@ osc_listen_port = 57121
 
 [button_configs.Shift]
 mode = "trigger"
+cc = 23
 
 [button_configs.Play]
 mode = "trigger"
+cc = 24
 
 [button_configs.Stop]
 mode = "trigger"
+cc = 25
 
 [button_configs.Rec]
 mode = "toggle"
