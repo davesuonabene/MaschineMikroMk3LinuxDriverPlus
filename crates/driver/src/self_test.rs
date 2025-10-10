@@ -9,17 +9,10 @@ pub(crate) fn self_test(
     screen: &mut Screen,
     lights: &mut Lights,
 ) -> HidResult<()> {
-    Font::write_digit(screen, 0, 0, 1, 4);
+    Font::write_string(screen, 0, 0, "MASCHINE", 2);
     screen.write(device)?;
-    thread::sleep(time::Duration::from_millis(100));
-    Font::write_digit(screen, 0, 32, 3, 4);
-    screen.write(device)?;
-    thread::sleep(time::Duration::from_millis(100));
-    Font::write_digit(screen, 0, 64, 3, 4);
-    screen.write(device)?;
-    thread::sleep(time::Duration::from_millis(100));
-    Font::write_digit(screen, 0, 96, 7, 4);
-    screen.write(device)?;
+    thread::sleep(time::Duration::from_millis(1000));
+
 
     for i in 0..39 {
         lights.set_button(num::FromPrimitive::from_u32(i).unwrap(), Brightness::Bright);

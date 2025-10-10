@@ -9,6 +9,7 @@ use hidapi::{HidDevice, HidResult};
 use maschine_library::controls::{Buttons, PadEventType};
 use maschine_library::lights::{Brightness, Lights, PadColors};
 use maschine_library::screen::Screen;
+use maschine_library::font::Font;
 use midir::os::unix::VirtualOutput;
 use midir::{MidiOutput, MidiOutputConnection};
 use midly::{MidiMessage, live::LiveEvent};
@@ -309,6 +310,19 @@ fn main_loop(
             let slider_val = buf[10];
             if slider_val != 0 {
                 println!("Slider: {}", slider_val);
+
+                // --- BEGIN ADDITION ---
+                // Send the slider value out via OSC
+                let address = "/maschine/slider".to_string();
+                let msg_contents = OscMessage {
+                    addr: address,
+                    args: vec![OscType::Int(slider_val as i32)],
+                };
+                let packet = OscPacket::Message(msg_contents);
+                if let Ok(encoded_buf) = rosc::encoder::encode(&packet) {
+                    let _ = osc_socket.send_to(&encoded_buf, osc_addr);
+                }
+                // --- END ADDITION ---
                 let cnt = (slider_val as i32 - 1 + 5) * 25 / 200 - 1;
                 for i in 0..25 {
                     let b = match cnt - i {
@@ -385,10 +399,99 @@ fn main_loop(
         // --- NEW: HANDLE INCOMING OSC NETWORK INPUT ---
         match osc_listener.recv_from(&mut osc_recv_buf) {
             Ok((size, _addr)) => {
+                if let Ok((_remaining, packet)) = decoder::decode_udp(&osc_recv_buf[..size]) {
+                    if let OscPacket::Message(msg) = packet {
+                        // Split the address path into parts
+                        let address_parts: Vec<&str> = msg.addr.split('/').filter(|&s| !s.is_empty()).collect();
+
+                        // Match on the address parts to determine the control type
+                        match address_parts.as_slice() {
+                            // Match /slider
+                            ["slider"] => {
+                                if let Some(OscType::Int(val)) = msg.args.first() {
+                                    println!("OSC RX: Controlling slider with value: {}", val);
+
+                                    let slider_val = (*val as u8).clamp(0, 200);
+                                    let cnt = (slider_val as i32 - 1 + 5) * 25 / 200 - 1;
+                                    for i in 0..25 {
+                                        let b = match cnt - i {
+                                            0 => Brightness::Normal,
+                                            1..=25 => Brightness::Dim,
+                                            _ => Brightness::Off,
+                                        };
+                                        lights.set_slider(i as usize, b);
+                                    }
+                                    changed_lights = true;
+                                }
+                            }
+                            // Match /pad/N
+                            ["pad", pad_str] => {
+                                if let Ok(pad_id) = pad_str.parse::<usize>() {
+                                    if pad_id < 16 { // Ensure pad_id is 0-15
+                                        if let (Some(OscType::Int(color_val)), Some(OscType::Int(brightness_val))) = (msg.args.get(0), msg.args.get(1)) {
+                                            
+                                            let color: PadColors = num::FromPrimitive::from_i32(*color_val).unwrap_or(PadColors::Off);
+                                            let brightness: Brightness = match brightness_val {
+                                                1 => Brightness::Dim,
+                                                2 => Brightness::Normal,
+                                                3 => Brightness::Bright,
+                                                _ => Brightness::Off,
+                                            };
+
+                                            println!("OSC RX: Setting Pad {} to Color: {:?}, Brightness: {:?}", pad_id, color, brightness);
+                                            lights.set_pad(pad_id, color, brightness);
+                                            changed_lights = true;
+                                        }
+                                    }
+                                }
+                            }
+                            // Match any other single-part address as a button (e.g., /play)
+                            [button_name] => {
+                                if let Some(button) = button_from_name(button_name) {
+                                    if let Some(OscType::Int(val)) = msg.args.first() {
+                                        println!("OSC RX: Controlling button {}: {}", button_name, val);
+                                        
+                                        let new_brightness = if *val == 1 { Brightness::Bright } else { Brightness::Off };
+                                        
+                                        if lights.button_has_light(button) {
+                                            lights.set_button(button, new_brightness);
+                                            changed_lights = true;
+                                        }
+                                    }
+                                }
+                            }
+                            // Ignore any other message format
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                // No data available right now, which is normal.
+            }
+            Err(e) => {
+                // A genuine network error occurred.
+                eprintln!("OSC listener error: {}", e);
+            }
+        }
+        // --- END OSC NETWORK INPUT ---
+        match osc_listener.recv_from(&mut osc_recv_buf) {
+            Ok((size, _addr)) => {
                 if let Ok((_remaining, packet)) = decoder::decode_udp(&osc_recv_buf[..size]) { 
                     if let OscPacket::Message(msg) = packet {
                         // Example Address: /puredata/events/1
                         let address_parts: Vec<&str> = msg.addr.trim_start_matches('/').split('/').collect();
+
+                        // --- HANDLE SCREEN TEXT ---
+                        if msg.addr == "/maschine/screen/text" {
+                            if let Some(OscType::String(s)) = msg.args.first() {
+                                println!("OSC RX: Displaying text: {}", s);
+                                _screen.reset();
+                                Font::write_string(_screen, 0, 0, s, 1);
+                                _screen.write(device)?;
+                            }
+                        }
+                        // --- END HANDLE SCREEN TEXT ---
 
                         // Check for the expected address structure: [PREFIX]/[BUTTON_NAME]/[VALUE]
                         if address_parts.len() >= 2 {
@@ -424,8 +527,6 @@ fn main_loop(
                 eprintln!("OSC listener error: {}", e);
             }
         }
-        // --- END OSC NETWORK INPUT ---
-
         if changed_lights {
             lights.write(device)?;
         }
