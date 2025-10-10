@@ -10,7 +10,7 @@ Forked from: [https://github.com/r00tman/maschine-mikro-mk3-driver/tree/main/cra
 - Open Sound Control (OSC) I/O
 - Custom MIDI mapping for all the buttons and pads (with modes, MIDI types and button groups)
 
-**This may be the start of a series of drivers written to unlock the full potential of great controllers such as the Maschine, made useless by the ignorance of companies that would let their instruments fall into the dark instead of opening up the possibility for us to use what we bought.
+*This may be the start of a series of drivers written to unlock the full potential of great controllers such as the Maschine, made useless by the ignorance of companies that would let their instruments fall into the dark instead of opening up the possibility for us to use what we bought.*
 
 ## Prerequisites
 
