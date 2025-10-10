@@ -38,15 +38,7 @@ cargo run --release example_config.toml
 
 ## Roadmap
 
-What worked already (as the original from @r00tman):
-input from {
- - Pads [with midi output],
- - Buttons,
- - Encoder,
- - Slider,
- - LEDs,
- - Screen.
-}
+Hardware input was already working, thanks to @r00tman 's work for that.
 
 What I added:
  - OSC Output [buttons, slider]
